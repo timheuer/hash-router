@@ -1,0 +1,253 @@
+@using Microsoft.AspNetCore.Components
+@using Microsoft.JSInterop
+@inject IJSRuntime JSRuntime
+@implements IAsyncDisposable
+
+@if (_isNavigating && Navigating != null)
+{
+    @Navigating
+}
+else if (_routeData != null)
+{
+    @if (Found != null)
+    {
+        @Found(_routeData)
+    }
+    else
+    {
+        <DynamicComponent Type="@_routeData.ComponentType" Parameters="@GetComponentParameters()" />
+    }
+}
+else if (_initialized)
+{
+    @if (NotFound != null)
+    {
+        @NotFound
+    }
+    else
+    {
+        <div>Page not found</div>
+    }
+}
+
+@code {
+    private IJSObjectReference? _jsModule;
+    private DotNetObjectReference<HashRouterComponent>? _dotNetRef;
+    private HashRouteMatcher _routeMatcher = new();
+    private HashRouteData? _routeData;
+    private bool _initialized;
+    private bool _isNavigating;
+    private string _currentHash = string.Empty;
+
+    /// <summary>
+    /// Assemblies to scan for [HashRoute] attributed components.
+    /// </summary>
+    [Parameter]
+    public IEnumerable<System.Reflection.Assembly>? AppAssembly { get; set; }
+
+    /// <summary>
+    /// Additional assemblies to scan for routes.
+    /// </summary>
+    [Parameter]
+    public IEnumerable<System.Reflection.Assembly>? AdditionalAssemblies { get; set; }
+
+    /// <summary>
+    /// Render fragment displayed when a matching route is found.
+    /// Receives the HashRouteData as context.
+    /// </summary>
+    [Parameter]
+    public RenderFragment<HashRouteData>? Found { get; set; }
+
+    /// <summary>
+    /// Render fragment displayed when no matching route is found.
+    /// </summary>
+    [Parameter]
+    public RenderFragment? NotFound { get; set; }
+
+    /// <summary>
+    /// Render fragment displayed while navigating (optional loading state).
+    /// </summary>
+    [Parameter]
+    public RenderFragment? Navigating { get; set; }
+
+    /// <summary>
+    /// Event raised when the route changes.
+    /// </summary>
+    [Parameter]
+    public EventCallback<HashRouteData?> OnRouteChanged { get; set; }
+
+    protected override async Task OnInitializedAsync()
+    {
+        // Collect all assemblies to scan
+        var assemblies = new List<System.Reflection.Assembly>();
+        
+        if (AppAssembly != null)
+        {
+            assemblies.AddRange(AppAssembly);
+        }
+        
+        if (AdditionalAssemblies != null)
+        {
+            assemblies.AddRange(AdditionalAssemblies);
+        }
+
+        if (assemblies.Count == 0)
+        {
+            // Default to entry assembly
+            var entryAssembly = System.Reflection.Assembly.GetEntryAssembly();
+            if (entryAssembly != null)
+            {
+                assemblies.Add(entryAssembly);
+            }
+        }
+
+        _routeMatcher.ScanAssemblies(assemblies);
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            _dotNetRef = DotNetObjectReference.Create(this);
+            _jsModule = await JSRuntime.InvokeAsync<IJSObjectReference>(
+                "import", 
+                "./_content/HashRouter/hashRouter.js");
+            
+            var initialHash = await _jsModule.InvokeAsync<string>("initialize", _dotNetRef);
+            await NavigateToHash(initialHash);
+            _initialized = true;
+            StateHasChanged();
+        }
+    }
+
+    /// <summary>
+    /// Called from JavaScript when the hash changes.
+    /// </summary>
+    [JSInvokable]
+    public async Task OnHashChanged(string hash)
+    {
+        if (_currentHash != hash)
+        {
+            await NavigateToHash(hash);
+        }
+    }
+
+    private async Task NavigateToHash(string hash)
+    {
+        _currentHash = hash;
+        _isNavigating = true;
+        StateHasChanged();
+
+        // Short delay for navigating state visibility (optional)
+        if (Navigating != null)
+        {
+            await Task.Delay(1); // Minimal delay to allow render
+        }
+
+        _routeData = _routeMatcher.Match(hash);
+        _isNavigating = false;
+
+        if (OnRouteChanged.HasDelegate)
+        {
+            await OnRouteChanged.InvokeAsync(_routeData);
+        }
+
+        StateHasChanged();
+    }
+
+    private IDictionary<string, object?> GetComponentParameters()
+    {
+        if (_routeData == null)
+            return new Dictionary<string, object?>();
+
+        var parameters = _routeData.GetAllParameters();
+        
+        // Add query parameters for properties with [SupplyParameterFromHashQuery]
+        BindQueryParameters(parameters);
+        
+        return parameters;
+    }
+
+    private void BindQueryParameters(IDictionary<string, object?> parameters)
+    {
+        if (_routeData == null)
+            return;
+
+        var componentType = _routeData.ComponentType;
+        var properties = componentType.GetProperties(System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance);
+
+        foreach (var property in properties)
+        {
+            var queryAttr = property.GetCustomAttributes(typeof(SupplyParameterFromHashQueryAttribute), true)
+                .FirstOrDefault() as SupplyParameterFromHashQueryAttribute;
+
+            if (queryAttr != null)
+            {
+                var queryName = queryAttr.Name ?? property.Name;
+                
+                if (_routeData.QueryParameters.TryGetValue(queryName, out var queryValue))
+                {
+                    // Convert the string value to the property type
+                    var convertedValue = ConvertValue(queryValue, property.PropertyType);
+                    parameters[property.Name] = convertedValue;
+                }
+            }
+        }
+    }
+
+    private static object? ConvertValue(string? value, Type targetType)
+    {
+        if (value == null)
+            return null;
+
+        var underlyingType = Nullable.GetUnderlyingType(targetType) ?? targetType;
+
+        if (underlyingType == typeof(string))
+            return value;
+
+        if (underlyingType == typeof(int) && int.TryParse(value, out var intVal))
+            return intVal;
+
+        if (underlyingType == typeof(long) && long.TryParse(value, out var longVal))
+            return longVal;
+
+        if (underlyingType == typeof(bool) && bool.TryParse(value, out var boolVal))
+            return boolVal;
+
+        if (underlyingType == typeof(Guid) && Guid.TryParse(value, out var guidVal))
+            return guidVal;
+
+        if (underlyingType == typeof(double) && double.TryParse(value, out var doubleVal))
+            return doubleVal;
+
+        if (underlyingType == typeof(decimal) && decimal.TryParse(value, out var decimalVal))
+            return decimalVal;
+
+        if (underlyingType == typeof(float) && float.TryParse(value, out var floatVal))
+            return floatVal;
+
+        if (underlyingType == typeof(DateTime) && DateTime.TryParse(value, out var dateVal))
+            return dateVal;
+
+        // Return as string for unknown types
+        return value;
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        if (_jsModule != null)
+        {
+            try
+            {
+                await _jsModule.InvokeVoidAsync("dispose");
+                await _jsModule.DisposeAsync();
+            }
+            catch (JSDisconnectedException)
+            {
+                // Ignore - circuit already disconnected
+            }
+        }
+
+        _dotNetRef?.Dispose();
+    }
+}

@@ -1,0 +1,171 @@
+@using Microsoft.AspNetCore.Components
+@using Microsoft.JSInterop
+@inject IJSRuntime JSRuntime
+@implements IAsyncDisposable
+
+<a href="@ComputedHref" 
+   class="@ComputedClass" 
+   @attributes="AdditionalAttributes"
+   @onclick="OnClick"
+   @onclick:preventDefault="@PreventDefault">
+    @ChildContent
+</a>
+
+@code {
+    private IJSObjectReference? _jsModule;
+    private DotNetObjectReference<HashNavLink>? _dotNetRef;
+    private string _currentHash = string.Empty;
+
+    /// <summary>
+    /// The hash path to navigate to (without the # prefix).
+    /// </summary>
+    [Parameter]
+    public string? Href { get; set; }
+
+    /// <summary>
+    /// CSS class(es) to apply to the link element.
+    /// </summary>
+    [Parameter]
+    public string? Class { get; set; }
+
+    /// <summary>
+    /// CSS class to apply when the link is active.
+    /// </summary>
+    [Parameter]
+    public string ActiveClass { get; set; } = "active";
+
+    /// <summary>
+    /// How to determine if the link is active.
+    /// </summary>
+    [Parameter]
+    public HashNavLinkMatch Match { get; set; } = HashNavLinkMatch.Prefix;
+
+    /// <summary>
+    /// Content to render inside the anchor element.
+    /// </summary>
+    [Parameter]
+    public RenderFragment? ChildContent { get; set; }
+
+    /// <summary>
+    /// Additional HTML attributes to apply to the anchor element.
+    /// </summary>
+    [Parameter(CaptureUnmatchedValues = true)]
+    public IDictionary<string, object>? AdditionalAttributes { get; set; }
+
+    private string ComputedHref => "#" + (Href?.TrimStart('#') ?? "");
+
+    private string ComputedClass
+    {
+        get
+        {
+            var classes = new List<string>();
+            
+            if (!string.IsNullOrEmpty(Class))
+            {
+                classes.Add(Class);
+            }
+            
+            if (IsActive && !string.IsNullOrEmpty(ActiveClass))
+            {
+                classes.Add(ActiveClass);
+            }
+            
+            return string.Join(" ", classes);
+        }
+    }
+
+    private bool IsActive
+    {
+        get
+        {
+            if (string.IsNullOrEmpty(Href))
+                return string.IsNullOrEmpty(_currentHash) || _currentHash == "/";
+
+            var targetPath = NormalizePath(Href);
+            var currentPath = NormalizePath(_currentHash);
+
+            return Match switch
+            {
+                HashNavLinkMatch.All => string.Equals(targetPath, currentPath, StringComparison.OrdinalIgnoreCase),
+                HashNavLinkMatch.Prefix => currentPath.StartsWith(targetPath, StringComparison.OrdinalIgnoreCase),
+                _ => false
+            };
+        }
+    }
+
+    private bool PreventDefault => false;
+
+    private static string NormalizePath(string path)
+    {
+        // Remove query string
+        var queryIndex = path.IndexOf('?');
+        if (queryIndex >= 0)
+        {
+            path = path.Substring(0, queryIndex);
+        }
+
+        // Normalize slashes
+        path = path.Trim('#', '/');
+        
+        // Empty path represents root
+        return string.IsNullOrEmpty(path) ? "/" : "/" + path;
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            _dotNetRef = DotNetObjectReference.Create(this);
+            _jsModule = await JSRuntime.InvokeAsync<IJSObjectReference>(
+                "import", 
+                "./_content/HashRouter/hashRouter.js");
+            
+            _currentHash = await _jsModule.InvokeAsync<string>("getHash");
+            
+            // Subscribe to hash changes
+            await _jsModule.InvokeVoidAsync("initialize", _dotNetRef);
+            
+            StateHasChanged();
+        }
+    }
+
+    /// <summary>
+    /// Called from JavaScript when the hash changes.
+    /// </summary>
+    [JSInvokable]
+    public Task OnHashChanged(string hash)
+    {
+        if (_currentHash != hash)
+        {
+            _currentHash = hash;
+            StateHasChanged();
+        }
+        return Task.CompletedTask;
+    }
+
+    private async Task OnClick()
+    {
+        if (!string.IsNullOrEmpty(Href) && _jsModule != null)
+        {
+            var hashPath = Href.TrimStart('#');
+            await _jsModule.InvokeVoidAsync("setHash", hashPath, false);
+        }
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        if (_jsModule != null)
+        {
+            try
+            {
+                await _jsModule.DisposeAsync();
+            }
+            catch (JSDisconnectedException)
+            {
+                // Ignore - circuit already disconnected
+            }
+        }
+
+        _dotNetRef?.Dispose();
+    }
+}

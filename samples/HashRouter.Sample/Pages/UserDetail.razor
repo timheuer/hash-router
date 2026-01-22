@@ -1,0 +1,121 @@
+@attribute [HashRoute("/user/{Id:int}")]
+@inject HashNavigationManager Navigation
+
+<PageTitle>User @Id</PageTitle>
+
+<h1>User Detail</h1>
+
+<div class="card mb-3">
+    <div class="card-header">
+        <strong>User ID:</strong> @Id
+    </div>
+    <div class="card-body">
+        <h5 class="card-title">User Information</h5>
+        <p class="card-text">
+            This page demonstrates hash-based routing with:
+        </p>
+        <ul>
+            <li><strong>Route parameter:</strong> <code>Id = @Id</code> (from <code>/user/{"{Id:int}"}</code>)</li>
+            <li><strong>Query parameter:</strong> <code>Tab = @(Tab ?? "(none)")</code> (from <code>?tab=...</code>)</li>
+        </ul>
+    </div>
+</div>
+
+<h2>Tab Navigation</h2>
+
+<ul class="nav nav-tabs mb-3">
+    <li class="nav-item">
+        <HashNavLink class="nav-link" Href="@($"/user/{Id}?tab=profile")" Match="HashNavLinkMatch.All" ActiveClass="active">
+            Profile
+        </HashNavLink>
+    </li>
+    <li class="nav-item">
+        <HashNavLink class="nav-link" Href="@($"/user/{Id}?tab=settings")" Match="HashNavLinkMatch.All" ActiveClass="active">
+            Settings
+        </HashNavLink>
+    </li>
+    <li class="nav-item">
+        <HashNavLink class="nav-link" Href="@($"/user/{Id}?tab=activity")" Match="HashNavLinkMatch.All" ActiveClass="active">
+            Activity
+        </HashNavLink>
+    </li>
+</ul>
+
+<div class="tab-content">
+    @switch (Tab?.ToLowerInvariant())
+    {
+        case "profile":
+            <div class="p-3 border rounded">
+                <h4>Profile Tab</h4>
+                <p>This is the profile tab content for User @Id.</p>
+                <dl>
+                    <dt>Name</dt>
+                    <dd>User @Id</dd>
+                    <dt>Email</dt>
+                    <dd>user@(Id)@("@")example.com</dd>
+                </dl>
+            </div>
+            break;
+        
+        case "settings":
+            <div class="p-3 border rounded">
+                <h4>Settings Tab</h4>
+                <p>This is the settings tab content for User @Id.</p>
+                <div class="form-check">
+                    <input class="form-check-input" type="checkbox" id="notifications" checked>
+                    <label class="form-check-label" for="notifications">
+                        Enable notifications
+                    </label>
+                </div>
+                <div class="form-check">
+                    <input class="form-check-input" type="checkbox" id="darkmode">
+                    <label class="form-check-label" for="darkmode">
+                        Dark mode
+                    </label>
+                </div>
+            </div>
+            break;
+        
+        case "activity":
+            <div class="p-3 border rounded">
+                <h4>Activity Tab</h4>
+                <p>Recent activity for User @Id:</p>
+                <ul>
+                    <li>Logged in - 5 minutes ago</li>
+                    <li>Updated profile - 2 hours ago</li>
+                    <li>Changed password - 1 week ago</li>
+                </ul>
+            </div>
+            break;
+        
+        default:
+            <div class="p-3 border rounded bg-light">
+                <p class="mb-0">Select a tab above to view content.</p>
+            </div>
+            break;
+    }
+</div>
+
+<hr />
+
+<h3>Programmatic Navigation</h3>
+<p>Use the buttons below to navigate programmatically:</p>
+
+<div class="btn-group" role="group">
+    <button class="btn btn-outline-primary" @onclick="() => NavigateToUser(1)">User 1</button>
+    <button class="btn btn-outline-primary" @onclick="() => NavigateToUser(2)">User 2</button>
+    <button class="btn btn-outline-primary" @onclick="() => NavigateToUser(3)">User 3</button>
+</div>
+
+@code {
+    [Parameter]
+    public int Id { get; set; }
+
+    [Parameter, SupplyParameterFromHashQuery(Name = "tab")]
+    public string? Tab { get; set; }
+
+    private async Task NavigateToUser(int userId)
+    {
+        await Navigation.NavigateToAsync($"/user/{userId}?tab=profile");
+    }
+}

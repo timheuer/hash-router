@@ -1,0 +1,21 @@
+﻿@attribute [HashRoute("/")]
+
+<PageTitle>Home</PageTitle>
+
+<h1>Hello, world!</h1>
+
+<p>Welcome to the HashRouter sample app!</p>
+
+<p>This app demonstrates hash-based routing with:</p>
+<ul>
+    <li>Route parameters (e.g., <code>/user/123</code>)</li>
+    <li>Query strings (e.g., <code>/user/123?tab=profile</code>)</li>
+    <li>Parameter constraints (e.g., <code>{{id:int}}</code>)</li>
+</ul>
+
+<p>Try navigating to:</p>
+<ul>
+    <li><HashNavLink Href="/counter">Counter</HashNavLink></li>
+    <li><HashNavLink Href="/user/1?tab=profile">User 1 - Profile</HashNavLink></li>
+    <li><HashNavLink Href="/user/2?tab=settings">User 2 - Settings</HashNavLink></li>
+</ul>

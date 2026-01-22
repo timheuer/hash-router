@@ -1,7 +1,6 @@
 @using Microsoft.AspNetCore.Components
-@using Microsoft.JSInterop
-@inject IJSRuntime JSRuntime
-@implements IAsyncDisposable
+@inject HashNavigationManager NavigationManager
+@implements IDisposable
 
 @if (_isNavigating && Navigating != null)
 {
@@ -31,8 +30,6 @@ else if (_initialized)
 }
 
 @code {
-    private IJSObjectReference? _jsModule;
-    private DotNetObjectReference<HashRouterComponent>? _dotNetRef;
     private HashRouteMatcher _routeMatcher = new();
     private HashRouteData? _routeData;
     private bool _initialized;
@@ -76,16 +73,16 @@ else if (_initialized)
     [Parameter]
     public EventCallback<HashRouteData?> OnRouteChanged { get; set; }
 
-    protected override async Task OnInitializedAsync()
+    protected override void OnInitialized()
     {
         // Collect all assemblies to scan
         var assemblies = new List<System.Reflection.Assembly>();
-        
+
         if (AppAssembly != null)
         {
             assemblies.AddRange(AppAssembly);
         }
-        
+
         if (AdditionalAssemblies != null)
         {
             assemblies.AddRange(AdditionalAssemblies);
@@ -102,33 +99,30 @@ else if (_initialized)
         }
 
         _routeMatcher.ScanAssemblies(assemblies);
+
+        // Subscribe to navigation changes
+        NavigationManager.LocationChanged += OnLocationChanged;
     }
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
         if (firstRender)
         {
-            _dotNetRef = DotNetObjectReference.Create(this);
-            _jsModule = await JSRuntime.InvokeAsync<IJSObjectReference>(
-                "import", 
-                "./_content/HashRouter/hashRouter.js");
-            
-            var initialHash = await _jsModule.InvokeAsync<string>("initialize", _dotNetRef);
-            await NavigateToHash(initialHash);
+            // Initialize the navigation manager (sets up JS interop)
+            await NavigationManager.EnsureInitializedAsync();
+
+            // Navigate to initial hash
+            await NavigateToHash(NavigationManager.Hash);
             _initialized = true;
             StateHasChanged();
         }
     }
 
-    /// <summary>
-    /// Called from JavaScript when the hash changes.
-    /// </summary>
-    [JSInvokable]
-    public async Task OnHashChanged(string hash)
+    private async void OnLocationChanged(object? sender, HashLocationChangedEventArgs e)
     {
-        if (_currentHash != hash)
+        if (_currentHash != e.Location)
         {
-            await NavigateToHash(hash);
+            await NavigateToHash(e.Location);
         }
     }
 
@@ -161,10 +155,10 @@ else if (_initialized)
             return new Dictionary<string, object?>();
 
         var parameters = _routeData.GetAllParameters();
-        
+
         // Add query parameters for properties with [SupplyParameterFromHashQuery]
         BindQueryParameters(parameters);
-        
+
         return parameters;
     }
 
@@ -174,7 +168,8 @@ else if (_initialized)
             return;
 
         var componentType = _routeData.ComponentType;
-        var properties = componentType.GetProperties(System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance);
+        var properties = componentType.GetProperties(System.Reflection.BindingFlags.Public |
+System.Reflection.BindingFlags.Instance);
 
         foreach (var property in properties)
         {
@@ -184,7 +179,7 @@ else if (_initialized)
             if (queryAttr != null)
             {
                 var queryName = queryAttr.Name ?? property.Name;
-                
+
                 if (_routeData.QueryParameters.TryGetValue(queryName, out var queryValue))
                 {
                     // Convert the string value to the property type
@@ -233,21 +228,8 @@ else if (_initialized)
         return value;
     }
 
-    public async ValueTask DisposeAsync()
+    public void Dispose()
     {
-        if (_jsModule != null)
-        {
-            try
-            {
-                await _jsModule.InvokeVoidAsync("dispose");
-                await _jsModule.DisposeAsync();
-            }
-            catch (JSDisconnectedException)
-            {
-                // Ignore - circuit already disconnected
-            }
-        }
-
-        _dotNetRef?.Dispose();
+        NavigationManager.LocationChanged -= OnLocationChanged;
     }
 }
